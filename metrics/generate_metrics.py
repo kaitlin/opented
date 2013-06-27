@@ -2,6 +2,8 @@ import dataset
 import csv
 import os
 from sqlalchemy.exc import ProgrammingError
+import pycountry
+from util import UnicodeWriter
 
 """ 
     Script to process data quality metrics on TED procurement data
@@ -50,10 +52,15 @@ def write_out_results(file1, file2, headers):
     file2.writerow(headers)
 
     for country in sorted(metrics.keys()):
-        vals = [country, metrics[country]['total']]
-        pct_vals = [country, metrics[country]['total']]
+        try:
+            vals = [country, pycountry.countries.get(alpha2=country).name, unicode(metrics[country]['total'])]
+            pct_vals = [country, pycountry.countries.get(alpha2=country).name, unicode(metrics[country]['total'])]
+        except KeyError:
+            vals = [country, '', unicode(metrics[country]['total'])]
+            pct_vals = [country, '',  unicode(metrics[country]['total'])]
+
         for field in columns:
-            vals.append(metrics.get(country).get(field, 0)) 
+            vals.append(unicode(metrics.get(country).get(field, 0)))
             pct_vals.append("{0:.2f}".format((metrics.get(country).get(field, 0)) / float(metrics[country]['total']) * 100)) 
 
         file1.writerow(vals)
@@ -82,12 +89,17 @@ if __name__ == '__main__':
     except ProgrammingError:
         pass #already exists
 
+    award_results = UnicodeWriter(open('award_results.csv', 'w'))
+    award_results_pct = UnicodeWriter(open('award_results_pct.csv', 'w'))
+    
     # run awards through tests
     print "Running tests on awards table"
     columns = db['awards'].columns  
-    award_headers = ['Country', 'Total Records']
+    award_headers = ['Country Abbrev', 'Country Name', 'Total Records']
     award_headers.extend(columns)
     awards = db.query('SELECT awards.*, country FROM awards LEFT JOIN document on document.uri=awards.uri')
+
+
 
     count = 0
     for aw in awards:
@@ -98,8 +110,6 @@ if __name__ == '__main__':
         if count % 100000 == 0: 
             print "count is %s" % count
 
-    award_results = csv.writer(open('award_results.csv', 'w'))
-    award_results_pct = csv.writer(open('award_results_pct.csv', 'w'))
 
     print "Writing out results"
     write_out_results(award_results, award_results_pct, award_headers)
@@ -109,8 +119,8 @@ if __name__ == '__main__':
     print "Running tests on document table"
     metrics = {}
 
-    doc_results = csv.writer(open('doc_results.csv', 'w'))
-    doc_results_pct = csv.writer(open('doc_results_pct.csv', 'w'))
+    doc_results = UnicodeWriter(open('doc_results.csv', 'w'))
+    doc_results_pct = UnicodeWriter(open('doc_results_pct.csv', 'w'))
 
     columns = db['document'].columns
     columns = sorted(list(columns))
@@ -122,7 +132,7 @@ if __name__ == '__main__':
         if count % 100000 == 0: 
             print "count is %s" % count
 
-    doc_headers = ['Country', 'Total Records']
+    doc_headers = ['Country Abbrev', 'Country Name', 'Total Records']
     doc_headers.extend(columns)
     print "Writing out results"
     write_out_results(doc_results, doc_results_pct, doc_headers)
