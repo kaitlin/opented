@@ -1,3 +1,4 @@
+import argparse
 import dataset
 import csv
 import os
@@ -46,7 +47,7 @@ def run_metrics(row, columns, country=None):
         else:
             add_to_country(country, column, completeness(row[column]))
 
-def write_out_results(file1, file2, headers):
+def write_out_results(file1, file2, headers, columns):
 
     file1.writerow(headers)
     file2.writerow(headers)
@@ -56,8 +57,13 @@ def write_out_results(file1, file2, headers):
             vals = [country, pycountry.countries.get(alpha2=country).name, unicode(metrics[country]['total'])]
             pct_vals = [country, pycountry.countries.get(alpha2=country).name, unicode(metrics[country]['total'])]
         except KeyError:
-            vals = [country, '', unicode(metrics[country]['total'])]
-            pct_vals = [country, '',  unicode(metrics[country]['total'])]
+            if 'Country Name' in headers:
+                vals = [country, '', unicode(metrics[country]['total'])]
+                pct_vals = [country, '',  unicode(metrics[country]['total'])]
+            else:
+                vals = [country, unicode(metrics[country]['total'])]
+                pct_vals = [country, unicode(metrics[country]['total'])]
+
 
         for field in columns:
             vals.append(unicode(metrics.get(country).get(field, 0)))
@@ -89,71 +95,99 @@ if __name__ == '__main__':
     except ProgrammingError:
         pass #already exists
 
-    award_results = UnicodeWriter(open('award_results.csv', 'w'))
-    award_results_pct = UnicodeWriter(open('award_results_pct.csv', 'w'))
+
+    #check for some arugments
+    argparser = argparse.ArgumentParser(description="Parse arguments for script")
+    argparser.add_argument('--group', dest='group', help='Sets the grouping level for field metrics. Default is by country.')
+    args = argparser.parse_args()
+    print args.group
+
+    if args.group:
+        writer = UnicodeWriter(open('award_by_%s.csv' % args.group, 'w'))
+        writer_pct = UnicodeWriter(open('award_by_%s_pct.csv' % args.group, 'w'))
+        headers = [args.group, 'Total Records']
+        columns = db['awards'].columns
+        headers.extend(columns)
+
+        if args.group == 'document_name':
+            group_awards = db.query('Select awards.*, document_name FROM awards LEFT JOIN document on document.uri=awards.uri')
+            count = 0
+            for ga in group_awards:
+                doc_name = ga['document_name']
+                run_metrics(ga, columns, doc_name)
+                count += 1
+                if count % 100000 == 0: 
+                    print "count is %s" % count
     
-    # run awards through tests
-    print "Running tests on awards table"
-    columns = db['awards'].columns  
-    award_headers = ['Country Abbrev', 'Country Name', 'Total Records']
-    award_headers.extend(columns)
-    awards = db.query('SELECT awards.*, country FROM awards LEFT JOIN document on document.uri=awards.uri')
+            print "Writing out results"
+            write_out_results(writer, writer_pct, headers, columns)
+            print "Done"
+
+    else:
+            
+        award_results = UnicodeWriter(open('award_results.csv', 'w'))
+        award_results_pct = UnicodeWriter(open('award_results_pct.csv', 'w'))
+        
+        # run awards through tests
+        print "Running tests on awards table"
+        columns = db['awards'].columns  
+        award_headers = ['Country Abbrev', 'Country Name', 'Total Records']
+        award_headers.extend(columns)
+        awards = db.query('SELECT awards.*, country FROM awards LEFT JOIN document on document.uri=awards.uri')
+
+        count = 0
+        for aw in awards:
+            #country = db['document'].find_one(uri=aw['uri'])['country']
+            country = aw['country']
+            run_metrics(aw, columns, country)
+            count += 1
+            if count % 100000 == 0: 
+                print "count is %s" % count
 
 
+        print "Writing out results"
+        write_out_results(award_results, award_results_pct, award_headers, columns)
+        print "Done"
 
-    count = 0
-    for aw in awards:
-        #country = db['document'].find_one(uri=aw['uri'])['country']
-        country = aw['country']
-        run_metrics(aw, columns, country)
-        count += 1
-        if count % 100000 == 0: 
-            print "count is %s" % count
+        # run documents through test
+        print "Running tests on document table"
+        metrics = {}
 
+        doc_results = UnicodeWriter(open('doc_results.csv', 'w'))
+        doc_results_pct = UnicodeWriter(open('doc_results_pct.csv', 'w'))
 
-    print "Writing out results"
-    write_out_results(award_results, award_results_pct, award_headers)
-    print "Done"
+        columns = db['document'].columns
+        columns = sorted(list(columns))
 
-    # run documents through test
-    print "Running tests on document table"
-    metrics = {}
+        count = 0
+        for doc in db['document']:
+            run_metrics(doc, columns)         
+            count += 1
+            if count % 100000 == 0: 
+                print "count is %s" % count
 
-    doc_results = UnicodeWriter(open('doc_results.csv', 'w'))
-    doc_results_pct = UnicodeWriter(open('doc_results_pct.csv', 'w'))
+        doc_headers = ['Country Abbrev', 'Country Name', 'Total Records']
+        doc_headers.extend(columns)
+        print "Writing out results"
+        write_out_results(doc_results, doc_results_pct, doc_headers, columns)
+        print "Done"
 
-    columns = db['document'].columns
-    columns = sorted(list(columns))
+        #Generating other misc stats
+        misc_results = csv.writer(open('misc_results.csv', 'w'))
+        
+        for a in db.query("SELECT COUNT(DISTINCT(uri)) FROM awards;"):
+            award_uris = a['count']
 
-    count = 0
-    for doc in db['document']:
-        run_metrics(doc, columns)         
-        count += 1
-        if count % 100000 == 0: 
-            print "count is %s" % count
+        for d in db.query("SELECT COUNT(DISTINCT(uri)) FROM document;"):
+            doc_uris = d['count']
 
-    doc_headers = ['Country Abbrev', 'Country Name', 'Total Records']
-    doc_headers.extend(columns)
-    print "Writing out results"
-    write_out_results(doc_results, doc_results_pct, doc_headers)
-    print "Done"
+        print "There are %s distinct URIs in awards and %s distinct URIs in documents" % (award_uris, doc_uris)
 
-    #Generating other misc stats
-    misc_results = csv.writer(open('misc_results.csv', 'w'))
-    
-    for a in db.query("SELECT COUNT(DISTINCT(uri)) FROM awards;"):
-        award_uris = a['count']
+        mismatch = db.query("SELECT country, year, count(*) FROM document WHERE uri NOT IN (SELECT awards.uri from awards WHERE awards.uri=uri) GROUP BY country, year ORDER BY country, year")
+        misc_results.writerow(("Number of URIs that exist in document table but not awards table, grouped by country and year",))
+        misc_results.writerow(("Country", "Year", "Number Missing"))
+        for m in mismatch:
+            misc_results.writerow((m['country'], m['year'], m['count']))
 
-    for d in db.query("SELECT COUNT(DISTINCT(uri)) FROM document;"):
-        doc_uris = d['count']
-
-    print "There are %s distinct URIs in awards and %s distinct URIs in documents" % (award_uris, doc_uris)
-
-    mismatch = db.query("SELECT country, year, count(*) FROM document WHERE uri NOT IN (SELECT awards.uri from awards WHERE awards.uri=uri) GROUP BY country, year ORDER BY country, year")
-    misc_results.writerow(("Number of URIs that exist in document table but not awards table, grouped by country and year",))
-    misc_results.writerow(("Country", "Year", "Number Missing"))
-    for m in mismatch:
-        misc_results.writerow((m['country'], m['year'], m['count']))
-
-    # more info on top level stats?
+        # more info on top level stats?
 
